@@ -3,7 +3,9 @@
  * https://github.com/hydronics2/COVID-19-Airflow-Sensor-AFH55M12
  * 
  * PCB accepts dual footprint feather ESP32 and Adafruit ItsyBitsy M0
- * 
+ * For Itsy Bitsy M0, add this to additinal boards manager URL in preferences
+ * https://adafruit.github.io/arduino-board-index/package_adafruit_index.json
+ * Then open boards manager and add Adafruit SAMD Boards
  * 
  * //4/15/20 - added SLM output
  * //4/21/20 - adjusted with Patrick's curve fit calbration equation.
