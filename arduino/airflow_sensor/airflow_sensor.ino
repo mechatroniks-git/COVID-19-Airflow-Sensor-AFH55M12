@@ -54,6 +54,7 @@ const int userButton = 10; //itsybitsy M0
 
 const int flowSensorPin = A0; 
 int flowSensorValue = 0;   
+float pressureOffset = 0;
 
 const int sizeBreath = 500;
 int arrayBreath[sizeBreath];
@@ -67,6 +68,8 @@ int incrementRollingSmall = 0;
 const int sizeRolling = 50;
 byte arrayAverage[sizeRolling];
 int incrementRolling = 0;
+float tidalVolume=0.0F;
+
 
 boolean startBreathFlag = false;
 boolean breathFlag = false;
@@ -81,8 +84,34 @@ double timePeriod;
 int pressureReading = 0;
 float pressureReading2 = 0;
 
+void calibratePressureOffset() {
+  int numSamples = 100;
+  delay(1000);
+  analogWrite(buzzer, 5);
+  //Serial.println("starting cal");
+  double pressureSum = 0;
+  //Serial.println(pressureSum);
+  for(int i=0; i<numSamples; i++) {
+    pressureSum = pressureSum + bme1.readPressure();
+    //Serial.print(i);
+    //Serial.print(" => ");   
+    //Serial.println(pressureSum);
+    delay(20);
+  }
+  analogWrite(buzzer, 0);
+  pressureOffset = pressureSum/numSamples;
+  //Serial.println("finished cal");
+  //Serial.println(pressureSum);
+  //Serial.println(pressureOffset);
+  //Serial.print("pressure ga =");
+  //Serial.println(bme1.readPressure()-pressureOffset);
+  
+}
+
+
 void setup()  // Start of setup
 {        
+  delay(500);
   Serial.begin(115200);
   analogReadResolution(12); //required for SAMD21
 
@@ -108,28 +137,55 @@ void setup()  // Start of setup
                                // scrolling marquee effects), use setTextWrap(false). The normal wrapping behavior is restored
                                // with setTextWrap(true).
   display.dim(0);  //Set brightness (0 is maximun and 1 is a little dim)
+  display.setFont(&FreeMono9pt7b);  // Set a custom font
+  display.setCursor(0, 20);  // (x,y)
+  display.println("Hydronics");  // Text or value to print
+  display.setCursor(0, 60);  // (x,y)
+  display.println("5/22/2020");  // Text or value to print
+  display.display();
+  delay(2500);
 
   if (! bme1.begin(0x76, &Wire)) //this is the sensor under the display
   {
     Serial.println("Could not find a valid BME280 sensor, check wiring! for 0x76");
     while (1);
   }
+  calibratePressureOffset();
 //  if (! bme2.begin(0x77, &Wire)) {
 //    Serial.println("Could not find a valid BME280 sensor, check wiring! for 0x77");
 //    while (1);
 //  }
 }  
 
+void updatePlot(float flow, float tidalVolume, float pressureGauge) {
+  Serial.print("SLMx10:");
+  Serial.print(flow*10); // print the calculated flow to the serial interface
+  Serial.print("\t"); // print the calculated flow to the serial interface
+  Serial.print("TidalVol:");
+  Serial.print(tidalVolume); // print the calculated flow to the serial interface
+  Serial.print("\t");
+  Serial.print("Pressurex100:"); // print the calculated flow to the serial interface
+  Serial.println(pressureGauge*100); // print the calculated flow to the serial interface
+}
+
+
 
 void loop()  // Start of loop
 {
   long now = millis();
-
+  float pressureGauge;
+  float bmeReading;
   if(now - lastTimeSense > senseInterval)
   {
-    flowSensorValue = analogRead(flowSensorPin);
-    //Serial.println(flowSensorValue);
     lastTimeSense = now;
+    flowSensorValue = analogRead(flowSensorPin);
+    float SLM = constrain(17.816955 - .029497326 * flowSensorValue + 1.231863E-5 * sq(flowSensorValue),0,100);
+    if (SLM < 2) SLM =0.0F;
+    tidalVolume = tidalVolume + SLM *(senseInterval+1)*1000/60000;
+   
+    bmeReading = bme1.readPressure();
+    pressureGauge = (bmeReading - pressureOffset) * 0.0101972; //convert to cm of water
+    updatePlot(SLM, tidalVolume, pressureGauge);
     if(flowSensorValue > flowSensorThreshold)
     {
       if(startBreathFlag == false)
@@ -137,23 +193,16 @@ void loop()  // Start of loop
         startBreathFlag = true;
         
         incrementBreath = 0;
-      }else
-      {
-        //int SLM = (flowSensorValue - averageSensorValue)*flowSensorCalibration; //converts SLM 
-        float SLM = constrain(17.816955 - .029497326 * flowSensorValue + 1.231863E-5 * sq(flowSensorValue),0,100);
+      }
+      else {
         
-        Serial.print("time: ");
-        Serial.print(now);
-        Serial.print(" ms, SLM: ");
-        //Serial.println((float)SLM/10000); //converts flow sensor calibration back to correct magnitude for printing
-        Serial.println(SLM);
         digitalWrite(userLED, HIGH);     
         if(incrementBreath == 20) 
         {
           breathFlag = true;
           displayBreath();
           digitalWrite(errorLED, HIGH);
-          analogWrite(buzzer, 5);
+          //analogWrite(buzzer, 5);
           pressureReading = bme1.readPressure(); //ok lets take a pressure reading now that there is flow
         }
         arrayBreath[incrementBreath] = flowSensorValue;
@@ -162,8 +211,8 @@ void loop()  // Start of loop
           incrementBreath = 0;      
         }
       }
-    }else 
-    {
+    }
+    else  {
       if(breathFlag) //a breath just finished... calculate the volume
       {        
         calculateBreath();
@@ -197,10 +246,10 @@ void loop()  // Start of loop
 
 void calculateBreath()
 {
-  pressureReading = pressureReading - atmosphericPressure; //subtract current pressure
+  pressureReading = pressureReading - pressureOffset; //subtract current pressure
   pressureReading2 = (float)pressureReading * 0.0101972; //convert to cm of water
-  Serial.print("pressure reading: ");
-  Serial.println(pressureReading2);
+//  Serial.print("pressure reading: ");
+//  Serial.println(pressureReading2);
 
   
   long totalSensorValue = 0;
@@ -210,9 +259,9 @@ void calculateBreath()
   }
   totalSensorValue = totalSensorValue/(sizeRolling);
   averageSensorValue = totalSensorValue*10; // change back into correct magnitude after packaging as a byte
-  Serial.println();
-  Serial.print("average sensor value: ");
-  Serial.println(averageSensorValue);
+//  Serial.println();
+//  Serial.print("average sensor value: ");
+//  Serial.println(averageSensorValue);
   float totalBreath = 0;  
   for(int i=0; i<incrementBreath; i++) //evaluate all the flow readings we received over the breath
   {
@@ -220,11 +269,12 @@ void calculateBreath()
     float change = (constrain(17.816955-.029497326*arrayBreath[i]+1.231863E-5*sq((float)arrayBreath[i]),0,100))*(senseInterval+1)*1000/60000; //converts SLM to mL
     totalBreath = totalBreath + change;
   }
-  Serial.print("increment Breath: "); //this is how many flow samples we evaluated
-  Serial.println(incrementBreath);
-  Serial.print("volume: "); //this is the total volume of all the flow samples
+  tidalVolume=0.0F;
+//  Serial.print("increment Breath: "); //this is how many flow samples we evaluated
+//  Serial.println(incrementBreath);
+//  Serial.print("volume: "); //this is the total volume of all the flow samples
   //Serial.println((float)totalBreath/10000); //adjust for correct magnitude of calibration factor
-  Serial.println(totalBreath);
+//  Serial.println(totalBreath);
   //float totalBreath2 = totalBreath/10000;
   updateDisplay(totalBreath);
 }  
@@ -306,10 +356,10 @@ void printAverageSensorValue()
   }
   averageSensorValue = averageSensorValue/(sizeRolling);
   averageSensorValue = averageSensorValue*10; // change back into correct magnitude after packaging as a byte
-  Serial.println();
-  Serial.println();
-  Serial.print("average sensor value: ");
-  Serial.println(averageSensorValue);
+//  Serial.println();
+//  Serial.println();
+//  Serial.print("average sensor value: ");
+//  Serial.println(averageSensorValue);
 
   flowSensorThreshold = averageSensorValue + 200;
 }
